@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+S3_BUCKET="{{ backup_s3_bucket }}"
+AWS_REGION="{{ aws_region }}"
+TMP_DIR="$(mktemp -d)"
+
+cleanup() {
+  rm -rf "${TMP_DIR}"
+}
+trap cleanup EXIT
+
+LATEST_KEY="$(aws s3 ls "s3://${S3_BUCKET}/daily/" --region "${AWS_REGION}" \
+  | awk '/\.dump$/ {print $4}' | sort | tail -n 1)"
+
+if [[ -z "${LATEST_KEY}" ]]; then
+  echo "[ERROR] No .dump backups found in s3://${S3_BUCKET}/daily/" >&2
+  exit 1
+fi
+
+echo "[INFO] Downloading latest backup: ${LATEST_KEY}"
+aws s3 cp "s3://${S3_BUCKET}/daily/${LATEST_KEY}" "${TMP_DIR}/${LATEST_KEY}" --region "${AWS_REGION}" --only-show-errors
+aws s3 cp "s3://${S3_BUCKET}/daily/${LATEST_KEY}.sha256" "${TMP_DIR}/${LATEST_KEY}.sha256" --region "${AWS_REGION}" --only-show-errors
+
+echo "[INFO] Verifying SHA-256 checksum"
+(cd "${TMP_DIR}" && sha256sum -c "${LATEST_KEY}.sha256")
+
+echo "[INFO] Verifying PostgreSQL dump archive integrity"
+pg_restore --list "${TMP_DIR}/${LATEST_KEY}" > /dev/null
+
+echo "[SUCCESS] Backup ${LATEST_KEY} passed checksum and pg_restore integrity checks."

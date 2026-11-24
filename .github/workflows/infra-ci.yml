@@ -1,0 +1,53 @@
+name: Infrastructure Validation CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  terraform-check:
+    name: Terraform Format & Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+
+      - name: Terraform Format Check
+        run: terraform -chdir=terraform fmt -check -recursive
+
+      - name: Terraform Init (no backend)
+        run: terraform -chdir=terraform init -backend=false
+
+      - name: Terraform Validate
+        run: terraform -chdir=terraform validate
+
+  ansible-check:
+    name: Ansible Syntax & Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Ansible & ansible-lint
+        run: pip install ansible ansible-lint
+
+      - name: Run Ansible Lint
+        run: ansible-lint ansible/playbook.yml
+
+      - name: Ansible Playbook Syntax Check
+        run: |
+          cp ansible/group_vars/all.yml.example ansible/group_vars/all.yml
+          printf "[prod_servers]\n127.0.0.1 ansible_connection=local\n" > ansible/inventory.ini
+          ANSIBLE_CONFIG=ansible/ansible.cfg ansible-playbook -i ansible/inventory.ini ansible/playbook.yml --syntax-check

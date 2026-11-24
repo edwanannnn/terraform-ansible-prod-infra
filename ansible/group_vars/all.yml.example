@@ -1,0 +1,20 @@
+---
+# Copy to group_vars/all.yml and update with your production values.
+domain_name: "app.example.com"
+certbot_email: "ops@example.com"
+app_upstream_port: 8000
+
+# SSH Hardening
+ssh_port: 22
+admin_user: "deploy"
+admin_ssh_public_key_file: "~/.ssh/id_ed25519.pub"
+
+# PostgreSQL & S3 Backup
+pg_db_name: "app_production"
+pg_db_user: "app_user"
+pg_backup_local_dir: "/var/backups/postgresql"
+pg_backup_local_retention_days: 7
+pg_backup_cron_hour: "2"
+pg_backup_cron_minute: "15"
+# Optional: set Slack/Discord webhook URL to receive backup failure notifications
+backup_alert_webhook_url: ""

@@ -1,0 +1,51 @@
+---
+- name: Install Nginx and Certbot packages
+  ansible.builtin.apt:
+    name:
+      - nginx
+      - certbot
+      - python3-certbot-nginx
+    state: present
+    update_cache: true
+
+- name: Remove default Nginx site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload nginx
+
+- name: Deploy hardened Nginx reverse proxy configuration
+  ansible.builtin.template:
+    src: site.conf.j2
+    dest: "/etc/nginx/sites-available/{{ domain_name }}.conf"
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Enable Nginx site symlink
+  ansible.builtin.file:
+    src: "/etc/nginx/sites-available/{{ domain_name }}.conf"
+    dest: "/etc/nginx/sites-enabled/{{ domain_name }}.conf"
+    state: link
+  notify: Reload nginx
+
+- name: Ensure Nginx is running before TLS issuance
+  ansible.builtin.service:
+    name: nginx
+    state: started
+    enabled: true
+
+- name: Check if Let's Encrypt certificate already exists
+  ansible.builtin.stat:
+    path: "/etc/letsencrypt/live/{{ domain_name }}/fullchain.pem"
+  register: letsencrypt_cert
+
+- name: Issue Let's Encrypt TLS certificate via Certbot
+  ansible.builtin.command: >
+    certbot --nginx
+    --non-interactive
+    --agree-tos
+    --email {{ certbot_email }}
+    --redirect
+    -d {{ domain_name }}
+  when: not letsencrypt_cert.stat.exists
+  notify: Reload nginx

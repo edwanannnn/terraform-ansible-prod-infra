@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DB_NAME="{{ pg_db_name }}"
+BACKUP_DIR="{{ pg_backup_local_dir }}"
+S3_BUCKET="{{ backup_s3_bucket }}"
+AWS_REGION="{{ aws_region }}"
+LOCAL_RETENTION_DAYS="{{ pg_backup_local_retention_days }}"
+ALERT_WEBHOOK="{{ backup_alert_webhook_url }}"
+
+TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+BACKUP_FILE="${BACKUP_DIR}/${DB_NAME}_${TIMESTAMP}.dump"
+CHECKSUM_FILE="${BACKUP_FILE}.sha256"
+
+notify_failure() {
+  local message="$1"
+  echo "[ERROR] ${message}" >&2
+  if [[ -n "${ALERT_WEBHOOK}" ]]; then
+    curl -sS -X POST -H 'Content-type: application/json' \
+      --data "{\"text\":\"[PostgreSQL Backup FAILED] ${DB_NAME} on $(hostname): ${message}\"}" \
+      "${ALERT_WEBHOOK}" || true
+  fi
+}
+
+trap 'notify_failure "Backup aborted unexpectedly on line $LINENO"' ERR
+
+echo "[INFO] Starting pg_dump for ${DB_NAME} at ${TIMESTAMP}"
+pg_dump -Fc -Z 6 --no-owner --no-acl "${DB_NAME}" -f "${BACKUP_FILE}"
+
+# Verify archive table of contents before uploading
+pg_restore --list "${BACKUP_FILE}" > /dev/null
+sha256sum "${BACKUP_FILE}" > "${CHECKSUM_FILE}"
+
+echo "[INFO] Uploading backup and checksum to s3://${S3_BUCKET}/daily/"
+aws s3 cp "${BACKUP_FILE}" "s3://${S3_BUCKET}/daily/$(basename "${BACKUP_FILE}")" \
+  --region "${AWS_REGION}" \
+  --sse AES256 \
+  --only-show-errors
+
+aws s3 cp "${CHECKSUM_FILE}" "s3://${S3_BUCKET}/daily/$(basename "${CHECKSUM_FILE}")" \
+  --region "${AWS_REGION}" \
+  --sse AES256 \
+  --only-show-errors
+
+echo "[INFO] Pruning local backups older than ${LOCAL_RETENTION_DAYS} days"
+find "${BACKUP_DIR}" -type f \( -name "*.dump" -o -name "*.sha256" \) -mtime +"${LOCAL_RETENTION_DAYS}" -delete
+
+echo "[INFO] Backup completed successfully: $(basename "${BACKUP_FILE}")"

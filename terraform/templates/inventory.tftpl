@@ -1,0 +1,6 @@
+[prod_servers]
+${server_ip} ansible_user=ubuntu ansible_ssh_private_key_file=${ssh_private_key_path}
+
+[prod_servers:vars]
+backup_s3_bucket=${backup_s3_bucket}
+aws_region=${aws_region}

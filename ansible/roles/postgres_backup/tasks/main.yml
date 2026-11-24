@@ -1,0 +1,60 @@
+---
+- name: Install PostgreSQL and AWS CLI
+  ansible.builtin.apt:
+    name:
+      - postgresql
+      - postgresql-contrib
+      - awscli
+    state: present
+    update_cache: true
+
+- name: Ensure PostgreSQL service is started and enabled
+  ansible.builtin.service:
+    name: postgresql
+    state: started
+    enabled: true
+
+- name: Ensure application database user exists
+  become_user: postgres
+  community.postgresql.postgresql_user:
+    name: "{{ pg_db_user }}"
+    state: present
+
+- name: Ensure application database exists
+  become_user: postgres
+  community.postgresql.postgresql_db:
+    name: "{{ pg_db_name }}"
+    owner: "{{ pg_db_user }}"
+    state: present
+
+- name: Create local backup directory
+  ansible.builtin.file:
+    path: "{{ pg_backup_local_dir }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0750"
+
+- name: Deploy PostgreSQL S3 backup script
+  ansible.builtin.template:
+    src: pg_backup_s3.sh.j2
+    dest: /usr/local/bin/pg_backup_s3.sh
+    owner: root
+    group: postgres
+    mode: "0750"
+
+- name: Deploy S3 backup restore verification script
+  ansible.builtin.template:
+    src: pg_restore_test.sh.j2
+    dest: /usr/local/bin/pg_restore_test.sh
+    owner: root
+    group: postgres
+    mode: "0750"
+
+- name: Schedule daily automated PostgreSQL backup to S3
+  ansible.builtin.cron:
+    name: "Daily PostgreSQL backup to S3"
+    user: postgres
+    minute: "{{ pg_backup_cron_minute }}"
+    hour: "{{ pg_backup_cron_hour }}"
+    job: "/usr/local/bin/pg_backup_s3.sh >> /var/log/pg_backup_s3.log 2>&1"

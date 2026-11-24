@@ -1,0 +1,16 @@
+---
+- name: Harden host, configure Nginx + SSL, and automate PostgreSQL S3 backups
+  hosts: prod_servers
+  become: true
+  gather_facts: true
+
+  vars_files:
+    - group_vars/all.yml
+
+  roles:
+    - role: security
+      tags: ["security", "hardening"]
+    - role: nginx_ssl
+      tags: ["nginx", "ssl"]
+    - role: postgres_backup
+      tags: ["postgres", "backup"]
