@@ -1,0 +1,4 @@
+# Copy to backend.hcl (ignored by Git) after running terraform/bootstrap.
+bucket         = "prod-web-stack-tfstate-123456789012"
+region         = "ap-southeast-1"
+dynamodb_table = "prod-web-stack-tf-locks"

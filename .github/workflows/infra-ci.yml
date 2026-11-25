@@ -22,11 +22,15 @@ jobs:
       - name: Terraform Format Check
         run: terraform -chdir=terraform fmt -check -recursive
 
-      - name: Terraform Init (no backend)
-        run: terraform -chdir=terraform init -backend=false
+      - name: Validate Bootstrap State Stack
+        run: |
+          terraform -chdir=terraform/bootstrap init -backend=false
+          terraform -chdir=terraform/bootstrap validate
 
-      - name: Terraform Validate
-        run: terraform -chdir=terraform validate
+      - name: Validate Root Infrastructure Stack
+        run: |
+          terraform -chdir=terraform init -backend=false
+          terraform -chdir=terraform validate
 
   ansible-check:
     name: Ansible Syntax & Lint

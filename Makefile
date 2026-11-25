@@ -1,12 +1,22 @@
-.PHONY: fmt validate plan apply destroy provision lint
+.PHONY: fmt bootstrap init validate plan apply destroy provision lint
 
 TF_DIR := terraform
+BOOTSTRAP_DIR := terraform/bootstrap
 ANSIBLE_DIR := ansible
 
 fmt:
 	terraform -chdir=$(TF_DIR) fmt -recursive
 
+bootstrap:
+	terraform -chdir=$(BOOTSTRAP_DIR) init
+	terraform -chdir=$(BOOTSTRAP_DIR) apply
+
+init:
+	terraform -chdir=$(TF_DIR) init -backend-config=backend.hcl
+
 validate:
+	terraform -chdir=$(BOOTSTRAP_DIR) init -backend=false
+	terraform -chdir=$(BOOTSTRAP_DIR) validate
 	terraform -chdir=$(TF_DIR) init -backend=false
 	terraform -chdir=$(TF_DIR) validate
 

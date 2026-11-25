@@ -1,14 +1,19 @@
-# Production AWS Infrastructure with Terraform & Ansible
+# Cost-Optimized Single-Node AWS Production Stack (Terraform + Ansible)
 
-Automated, repeatable Infrastructure as Code (IaC) and configuration management pipeline that provisions a hardened AWS production server and configures Nginx TLS + verified PostgreSQL backups to S3.
+Modular Infrastructure as Code (IaC) and Ansible automation for teams and early-stage production workloads that want **real AWS security, remote state management, TLS termination, and verified S3 database backups** without over-engineering or paying for an idle Kubernetes/multi-AZ cluster.
 
 ## Architecture
 
 ```
                          ┌──────────────────────────────┐
-   Admin IP (CIDR) ──22──▶│   AWS VPC + Security Group   │
-   Public Traffic  80/443▶│   EC2 Ubuntu 24.04 (IMDSv2)  │
-                         │   + Encrypted gp3 EBS + EIP  │
+   Admin IP (CIDR) ──22──▶│  Module: network             │
+   Public Traffic  80/443▶│  VPC + Subnet + IGW + SG     │
+                         └──────────────┬───────────────┘
+                                        │
+                         ┌──────────────▼───────────────┐
+                         │  Module: compute             │
+                         │  EC2 Ubuntu 24.04 (IMDSv2)   │
+                         │  + Encrypted gp3 EBS + EIP   │
                          └──────────────┬───────────────┘
                                         │
         ┌───────────────────────────────┼───────────────────────────────┐
@@ -24,44 +29,50 @@ Automated, repeatable Infrastructure as Code (IaC) and configuration management 
 └────────────────┘             └─────────────────┘             └────────┬─────────┘
                                                                         │ IAM Role
                                                                         ▼
-                                                               ┌──────────────────┐
-                                                               │  Private S3      │
-                                                               │  Backup Bucket   │
+  Remote State (bootstrap/):                                   ┌──────────────────┐
+  S3 State Bucket + DynamoDB Lock                              │  Module:         │
+                                                               │  backup_storage  │
                                                                └──────────────────┘
 ```
 
-## Key Security & Reliability Controls
+## Design Decisions & Trade-offs
 
-- **Terraform Provisioning (`terraform/`):**
-  - Dedicated VPC, public subnet, Internet Gateway, and Security Group rejecting SSH from `0.0.0.0/0` via variable validation.
-  - EC2 Ubuntu 24.04 host enforcing **IMDSv2** and **encrypted gp3 EBS** root volume.
-  - Least-privilege **IAM Instance Profile** scoped strictly to `s3:ListBucket`, `s3:PutObject`, and `s3:GetObject` on the backup bucket (no static AWS keys stored on the server).
-  - Private **S3 backup bucket** with versioning, AES-256 encryption, Public Access Block, and lifecycle rules (30-day Infrequent Access, 90-day expiration).
-  - Auto-generates `ansible/inventory.ini` via `templatefile` so zero manual IP copying is needed.
-- **Ansible Configuration (`ansible/`):**
-  - **`security` role:** Creates non-root `deploy` sudo user, disables root/password SSH login, restricts SSH `MaxAuthTries 3`, configures **UFW** default-deny firewall, enables **Fail2ban**, and turns on `unattended-upgrades`.
-  - **`nginx_ssl` role:** Sets up rate-limited Nginx reverse proxy (`15r/s`, burst `30`), security headers, `/healthz` endpoint, and automated **Certbot Let's Encrypt** HTTPS redirect.
-  - **`postgres_backup` role:** Schedules daily `pg_dump -Fc` backups, validates archive integrity (`pg_restore --list`) + SHA-256 checksums before uploading to S3, prunes local files >7 days, and includes `pg_restore_test.sh` to verify backups directly from S3.
-- **CI Validation (`.github/workflows/infra-ci.yml`):**
-  - Runs `terraform fmt -check`, `terraform validate`, `ansible-lint`, and `ansible-playbook --syntax-check` on every push/PR.
+- **Remote State + Locking (`terraform/bootstrap/`):** Separates bootstrap state storage (versioned, encrypted S3 bucket + DynamoDB `LockID` table) from workload infrastructure so state never sits untracked on a developer laptop.
+- **Modular Terraform (`terraform/modules/`):** Splits `network`, `backup_storage`, and `compute` cleanly so modules stay readable and reusable across environments.
+- **Least-Privilege IAM & IMDSv2:** EC2 uses an instance profile scoped strictly to `s3:ListBucket`, `s3:PutObject`, and `s3:GetObject` on the backup bucket—zero static AWS keys on disk—with IMDSv2 enforced (`http_tokens = "required"`).
+- **Verified Backups, Not "Blind Cron":** `pg_backup_s3.sh` validates archive integrity with `pg_restore --list` and records a SHA-256 checksum before uploading, while `pg_restore_test.sh` downloads the latest S3 artifact and checks both integrity and checksum.
+- **Pragmatic Single-Node Footprint:** Uses a single EC2 host + S3 off-site backups rather than RDS Multi-AZ or EKS to keep baseline monthly AWS spend low; the Ansible roles remain decoupled if PostgreSQL is later moved to RDS.
 
 ## Quickstart
 
-### 1. Provision AWS Infrastructure (Terraform)
+### 1. Bootstrap Remote State Backend (One-Time)
 
 ```bash
-cd terraform
-cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with your trusted SSH CIDR and key paths
-
+cd terraform/bootstrap
 terraform init
+terraform apply
+```
+
+Copy the resulting bucket and DynamoDB table outputs into `terraform/backend.hcl`:
+
+```bash
+cd ..
+cp backend.hcl.example backend.hcl
+cp terraform.tfvars.example terraform.tfvars
+# Edit backend.hcl and terraform.tfvars (never set allowed_ssh_cidr to 0.0.0.0/0)
+```
+
+### 2. Provision Infrastructure (Terraform)
+
+```bash
+terraform init -backend-config=backend.hcl
 terraform plan
 terraform apply
 ```
 
 Terraform automatically writes `ansible/inventory.ini` with the Elastic IP and S3 bucket name.
 
-### 2. Configure & Harden Host (Ansible)
+### 3. Harden Host, Enable TLS & Configure S3 Backups (Ansible)
 
 ```bash
 cd ../ansible
@@ -72,9 +83,9 @@ ansible-galaxy collection install ansible.posix community.general community.post
 ANSIBLE_CONFIG=ansible.cfg ansible-playbook -i inventory.ini playbook.yml
 ```
 
-### 3. Verify Automated Backups & Restore Integrity
+### 4. Verify Automated Backups & Restore Integrity
 
-On the provisioned server:
+On the provisioned host:
 
 ```bash
 sudo -u postgres /usr/local/bin/pg_backup_s3.sh

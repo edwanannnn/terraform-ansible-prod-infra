@@ -5,6 +5,8 @@
 *.tfstate.*
 *.tfvars
 !terraform.tfvars.example
+terraform/backend.hcl
+!terraform/backend.hcl.example
 crash.log
 override.tf
 override.tf.json
